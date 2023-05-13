@@ -6,49 +6,205 @@ import Iter "mo:base/Iter";
 import HashMap "mo:base/HashMap";
 import Nat "mo:base/Nat";
 import Nat32 "mo:base/Nat32";
+import Text "mo:base/Text";
+import Hash "mo:base/Hash";
+import Principal "mo:base/Principal";
 
-actor class StudentWall() {
+
+
+actor class studenWall() {
+
+
   type Message = Type.Message;
-  type Content = Type.Content;
-  type Survey = Type.Survey;
-  type Answer = Type.Answer;
+	type Content = Type.Content;
 
-  // Add a new message to the wall
+
+  stable var messageIdCount : Nat = 0;
+
+  private func _hashNat(n : Nat) : Hash.Hash = return Text.hash(Nat.toText(n));
+	let wall = HashMap.HashMap<Nat, Message>(0, Nat.equal, _hashNat);
+
   public shared ({ caller }) func writeMessage(c : Content) : async Nat {
-    return 9;
-  };
+		// Id logic
+		let id : Nat = messageIdCount;
+		messageIdCount += 1;
 
-  // Get a specific message by ID
-  public shared query func getMessage(messageId : Nat) : async Result.Result<Message, Text> {
-    return #err("not implemented");
-  };
+		// Create the new message
+		var newMessage : Message = {
+			content = c;
+			creator = caller;
+			vote = 0;
+		};
 
-  // Update the content for a specific message by ID
-  public shared ({ caller }) func updateMessage(messageId : Nat, c : Content) : async Result.Result<(), Text> {
-    return #err("not implemented");
-  };
+		// Instert Data into wall
+		wall.put(id, newMessage);
 
-  // Delete a specific message by ID
-  public shared ({ caller }) func deleteMessage(messageId : Nat) : async Result.Result<(), Text> {
-    return #err("not implemented");
-  };
+		return id;
+	};
 
-  // Voting
-  public func upVote(messageId : Nat) : async Result.Result<(), Text> {
-    return #err("not implemented");
-  };
+    public  func getMessage(messageID : Nat) : async Result.Result<Message, Text> {
+		
+      let messageData : ?Message = wall.get(messageID);
 
-  public func downVote(messageId : Nat) : async Result.Result<(), Text> {
-    return #err("not implemented");
-  };
+      switch (messageData) {
+			  case (null) {
+				  return #err "Error";
+			  };
+			  case (?message) {
+				  return #ok message;
+			  };	
+      };
+    };
 
-  // Get all messages
-  public func getAllMessages() : async [Message] {
-    return [];
-  };
+    public shared ({ caller }) func updateMessage(messageID : Nat, c : Content) : async Result.Result<(), Text> {
+		
+      var isAuth : Bool = not Principal.isAnonymous(caller);
+    
 
-  // Get all messages ordered by votes
-  public func getAllMessagesRanked() : async [Message] {
-    return [];
-  };
+        if (not isAuth) {
+			    return #err "You must be authenticated to validate that you are the creator of the message!";
+		    };
+    
+      let messageData : ?Message = wall.get(messageID);
+    
+          switch (messageData) {
+			case (null) {
+				return #err "The requested message does not exist.";
+			};
+			case (?message) {
+				if (message.creator != caller) {
+					return #err "You are not the creator of this message!";
+				};
+
+				let updatedMessage : Message = {
+					creator = message.creator;
+					content = c;
+					vote = message.vote;
+				};
+
+				wall.put(messageID, updatedMessage);
+
+				return #ok();
+			};
+		};
+	};
+
+    	public shared ({ caller }) func deleteMessage(messageID : Nat) : async Result.Result<(), Text> {
+		let messageData : ?Message = wall.get(messageID);
+
+		switch (messageData) {
+			case (null) {
+				return #err "The requested message does not exist.";
+			};
+			case (?message) {
+				if (message.creator != caller) {
+					return #err "You are not the creator of this message!";
+				};
+
+				ignore wall.remove(messageID);
+
+				return #ok();
+			};
+		};
+
+		return #ok();
+	};
+
+  
+	// Voting
+	public func upVote(messageId : Nat) : async Result.Result<(), Text> {
+		let messageData : ?Message = wall.get(messageId);
+
+		switch (messageData) {
+			case (null) {
+				return #err "The requested message does not exist.";
+			};
+			case (?message) {
+				let updatedMessage : Message = {
+					creator = message.creator;
+					content = message.content;
+					vote = message.vote + 1;
+				};
+
+				wall.put(messageId, updatedMessage);
+
+				return #ok();
+			};
+		};
+
+		return #ok();
+	};
+
+	public func downVote(messageId : Nat) : async Result.Result<(), Text> {
+		let messageData : ?Message = wall.get(messageId);
+
+		switch (messageData) {
+			case (null) {
+				return #err "The requested message does not exist.";
+			};
+			case (?message) {
+				let updatedMessage : Message = {
+					creator = message.creator;
+					content = message.content;
+					vote = message.vote - 1;
+				};
+
+				wall.put(messageId, updatedMessage);
+
+				return #ok();
+			};
+		};
+
+		return #ok();
+	};
+
+	// Get all messages
+	public func getAllMessages() : async [Message] {
+		let messagesBuff = Buffer.Buffer<Message>(0);
+
+		for (msg in wall.vals()) {
+			messagesBuff.add(msg);
+		};
+
+		return Buffer.toArray<Message>(messagesBuff);
+	};
+
+	// Get all messages ordered by votes
+	public func getAllMessagesRanked() : async [Message] {
+		let messagesBuff = Buffer.Buffer<Message>(0);
+
+		for (msg in wall.vals()) {
+			messagesBuff.add(msg);
+		};
+
+		var messages = Buffer.toVarArray<Message>(messagesBuff);
+
+		// Reversed buble sort
+		var size = messages.size();
+
+		// substract 1 to size only if size is > than 0 to prevent errors
+		if (size > 0) {
+			size -= 1;
+		};
+
+		for (a in Iter.range(0, size)) {
+			var maxIndex = a;
+
+			for (b in Iter.range(a, size)) {
+				if (messages[b].vote > messages[a].vote) {
+					maxIndex := b;
+				};
+			};
+
+			let tmp = messages[maxIndex];
+			messages[maxIndex] := messages[a];
+			messages[a] := tmp;
+		};
+
+		return Array.freeze<Message>(messages);
+	};
+
 };
+	
+	
+
